@@ -1,235 +1,372 @@
 import streamlit as st
 import requests
-from PIL import Image
 import io
-import random
+from typing import List, Tuple, Optional
 
-# ===== CONFIG =====
-API_URL = "http://159.89.15.19:8000"  # Your VPS API endpoint
-RANDOM_CATALOG_SIZE = 50
+# ===== CONFIGURATION =====
+API_URL = "http://159.89.15.19:8000"
+CATALOG_SIZE = 50
+GRID_COLUMNS = 4
+RESULTS_PER_PAGE = 20
 
-# ===== SESSION STATE =====
-if 'view_mode' not in st.session_state:
-    st.session_state.view_mode = 'catalog'  # 'catalog', 'search_results', 'detail'
-if 'selected_image' not in st.session_state:
-    st.session_state.selected_image = None
-if 'search_results' not in st.session_state:
-    st.session_state.search_results = []
-if 'random_images' not in st.session_state:
-    st.session_state.random_images = []
+# ===== PAGE CONFIGURATION =====
+st.set_page_config(
+    page_title="Image Search",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# ===== CUSTOM CSS =====
+st.markdown("""
+<style>
+    /* Main container */
+    .main > div {
+        padding-top: 2rem;
+    }
+    
+    /* Hide streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Search box styling */
+    .stTextInput > div > div > input {
+        font-size: 16px;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        height: 45px;
+        font-weight: 500;
+    }
+    
+    /* Image hover effect */
+    img {
+        border-radius: 8px;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    img:hover {
+        transform: scale(1.02);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    }
+    
+    /* Card styling */
+    .image-card {
+        background: white;
+        border-radius: 12px;
+        padding: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    /* Similarity score badge */
+    .similarity-badge {
+        display: inline-block;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        margin-top: 8px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
-# ===== HELPER FUNCTIONS =====
-def fetch_image_list():
-    """Fetch all image URLs from backend."""
+# ===== SESSION STATE INITIALIZATION =====
+def init_session_state():
+    """Initialize session state variables"""
+    defaults = {
+        'page': 'home',
+        'search_results': [],
+        'catalog_images': [],
+        'selected_image': None,
+        'search_query': '',
+        'last_search_type': None
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
+# ===== API FUNCTIONS =====
+def check_api_status() -> bool:
+    """Check if API is responsive"""
+    try:
+        response = requests.get(f"{API_URL}/", timeout=3)
+        return response.status_code == 200
+    except:
+        return False
+
+
+def fetch_all_images() -> List[str]:
+    """Fetch complete image list from API"""
     try:
         response = requests.get(f"{API_URL}/list_images", timeout=10)
         if response.status_code == 200:
             return response.json().get('images', [])
-        else:
-            st.error(f"API Error: {response.status_code}")
-            return []
-    except requests.exceptions.RequestException:
-        st.error("❌ Cannot connect to API for image list.")
-        return []
-
-
-def load_random_images(count=RANDOM_CATALOG_SIZE):
-    """Select random images from the backend list."""
-    all_images = fetch_image_list()
-    if len(all_images) > count:
-        return random.sample(all_images, count)
-    return all_images
-
-
-def search_by_text(text_query, top_k=10):
-    """Search images via text query."""
-    try:
-        response = requests.post(f"{API_URL}/encode_text_query", params={"text_query": text_query, "top_k": top_k}, timeout=30)
-        if response.status_code == 200:
-            results = response.json().get('top_k_similar_items', [])
-            # Convert dict format to tuple format (url, score)
-            return [(item['url'], item['similarity']) for item in results]
-        else:
-            st.error(f"API Error: {response.status_code} - {response.text}")
-            return []
-    except requests.exceptions.RequestException:
-        st.error("❌ Cannot connect to API.")
-        return []
-
-
-def search_by_image(image_file, top_k=10):
-    """Search images via uploaded image."""
-    try:
-        image_file.seek(0)
-        files = {"image_query": ("image.jpg", image_file, "image/jpeg")}
-        response = requests.post(f"{API_URL}/encode_image_query", files=files, params={"top_k": top_k}, timeout=30)
-        if response.status_code == 200:
-            results = response.json().get('top_k_similar_items', [])
-            # Convert dict format to tuple format (url, score)
-            return [(item['url'], item['similarity']) for item in results]
-        else:
-            st.error(f"API Error: {response.status_code} - {response.text}")
-            return []
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ Cannot connect to API: {e}")
-        return []
-
-
-def display_image_grid(image_list, cols=3):
-    """Display images in a grid layout."""
-    rows = [image_list[i:i+cols] for i in range(0, len(image_list), cols)]
-    for row in rows:
-        columns = st.columns(cols)
-        for idx, col in enumerate(columns):
-            if idx < len(row):
-                item = row[idx]
-                if isinstance(item, tuple):
-                    img_url, score = item
-                else:
-                    img_url, score = item, None
-                try:
-                    with col:
-                        st.image(img_url, use_column_width=True)
-                        if st.button("View Details", key=f"btn_{img_url}"):
-                            st.session_state.selected_image = img_url
-                            st.session_state.view_mode = 'detail'
-                            st.rerun()
-                except Exception as e:
-                    col.error(f"Error loading image: {e}")
-
-
-# ===== PAGES =====
-def show_catalog():
-    """Main catalog page."""
-    st.title("🖼️ Image Catalog & Search")
-    
-    # API status
-    try:
-        response = requests.get(f"{API_URL}/", timeout=2)
-        if response.status_code == 200:
-            st.success("✅ API Connected")
-        else:
-            st.warning("⚠️ API responding but unclear")
     except:
-        st.error("❌ API Not Connected")
+        pass
+    return []
+
+
+def search_by_text(query: str, top_k: int = 20) -> List[Tuple[str, float]]:
+    """Search images by text description"""
+    try:
+        response = requests.post(
+            f"{API_URL}/encode_text_query",
+            params={"text_query": query, "top_k": top_k},
+            timeout=30
+        )
+        if response.status_code == 200:
+            results = response.json().get('top_k_similar_items', [])
+            return [(item['url'], item['similarity']) for item in results]
+    except Exception as e:
+        st.error(f"Search failed: {str(e)}")
+    return []
+
+
+def search_by_image(image_bytes: io.BytesIO, top_k: int = 20) -> List[Tuple[str, float]]:
+    """Search images by uploaded image"""
+    try:
+        image_bytes.seek(0)
+        files = {"image_query": ("query.jpg", image_bytes, "image/jpeg")}
+        response = requests.post(
+            f"{API_URL}/encode_image_query",
+            files=files,
+            params={"top_k": top_k},
+            timeout=30
+        )
+        if response.status_code == 200:
+            results = response.json().get('top_k_similar_items', [])
+            return [(item['url'], item['similarity']) for item in results]
+    except Exception as e:
+        st.error(f"Image search failed: {str(e)}")
+    return []
+
+
+def find_similar_images(image_url: str, top_k: int = 21) -> List[Tuple[str, float]]:
+    """Find similar images to a given URL"""
+    try:
+        img_response = requests.get(image_url, timeout=10)
+        if img_response.status_code == 200:
+            image_bytes = io.BytesIO(img_response.content)
+            results = search_by_image(image_bytes, top_k)
+            # Filter out the source image
+            return [(url, score) for url, score in results if url != image_url][:20]
+    except Exception as e:
+        st.error(f"Failed to find similar images: {str(e)}")
+    return []
+
+
+# ===== UI COMPONENTS =====
+def render_header():
+    """Render page header with navigation"""
+    col1, col2, col3 = st.columns([1, 2, 1])
     
-    st.subheader("Search")
-    col1, col2 = st.columns(2)
+    with col2:
+        st.markdown("# 🔍 Image Search Engine")
+        st.markdown("##### Powered by Visual AI")
     
-    # Text search
-    with col1:
-        text_query = st.text_input("🔍 Search by text", placeholder="Enter description...")
-        if st.button("Search by Text", use_container_width=True):
-            if text_query:
-                results = search_by_text(text_query)
+    # API status indicator
+    with col3:
+        if check_api_status():
+            st.success("🟢 API Online", icon="✅")
+        else:
+            st.error("🔴 API Offline", icon="⚠️")
+
+
+def render_search_box():
+    """Render search interface"""
+    st.markdown("---")
+    
+    tab1, tab2 = st.tabs(["🔤 Text Search", "📸 Image Search"])
+    
+    with tab1:
+        col1, col2 = st.columns([4, 1])
+        with col1:
+            query = st.text_input(
+                "Search",
+                placeholder="Describe what you're looking for...",
+                label_visibility="collapsed",
+                key="text_search_input"
+            )
+        with col2:
+            search_btn = st.button("Search", key="text_search_btn", type="primary")
+        
+        if search_btn and query:
+            with st.spinner("Searching..."):
+                results = search_by_text(query, RESULTS_PER_PAGE)
                 if results:
-                    st.session_state.search_results = results[:10]
-                    st.session_state.view_mode = 'search_results'
+                    st.session_state.search_results = results
+                    st.session_state.search_query = query
+                    st.session_state.last_search_type = 'text'
+                    st.session_state.page = 'results'
                     st.rerun()
                 else:
-                    st.warning("No results found")
+                    st.warning("No results found. Try different keywords.")
     
-    # Image search
-    with col2:
-        uploaded_file = st.file_uploader("📸 Search by image", type=['jpg', 'jpeg', 'png'])
-        if uploaded_file:
-            results = search_by_image(uploaded_file)
-            if results:
-                st.session_state.search_results = results[:10]
-                st.session_state.view_mode = 'search_results'
-                st.rerun()
-            else:
-                st.warning("No results found")
-    
-    st.divider()
-    
-    # Random catalog
-    st.subheader("Browse Catalog")
-    if st.button("🔄 Refresh Catalog"):
-        st.session_state.random_images = load_random_images(RANDOM_CATALOG_SIZE)
-    if not st.session_state.random_images:
-        st.session_state.random_images = load_random_images(RANDOM_CATALOG_SIZE)
-    
-    display_image_grid(st.session_state.random_images, cols=3)
-
-
-def show_search_results():
-    """Display search results."""
-    st.title("🔍 Search Results")
-    if st.button("← Back to Catalog"):
-        st.session_state.view_mode = 'catalog'
-        st.rerun()
-    st.divider()
-    if st.session_state.search_results:
-        display_image_grid(st.session_state.search_results, cols=3)
-    else:
-        st.info("No results found.")
-
-
-def show_detail():
-    """Detail view of selected image with similar items."""
-    st.title("📸 Image Details")
-    if st.button("← Back"):
-        st.session_state.view_mode = 'search_results' if st.session_state.search_results else 'catalog'
-        st.rerun()
-    
-    selected_img = st.session_state.selected_image
-    if selected_img:
-        st.image(selected_img, use_column_width=True)
-        st.divider()
-        st.subheader("🔗 Similar Items")
+    with tab2:
+        uploaded_file = st.file_uploader(
+            "Upload an image to find similar ones",
+            type=['jpg', 'jpeg', 'png'],
+            label_visibility="visible"
+        )
         
-        try:
-            # Fetch the image from URL
-            img_response = requests.get(selected_img, timeout=10)
-            if img_response.status_code != 200:
-                st.error(f"Failed to fetch image: HTTP {img_response.status_code}")
-                return
-            
-            # Create BytesIO object from image content
-            image_bytes = io.BytesIO(img_response.content)
-            
-            # Search for similar images (request 11 to get 10 after filtering out the selected one)
-            similar_items = search_by_image(image_bytes, top_k=11)
-            
-            if similar_items:
-                # Filter out the selected image and take top 10
-                similar_items = [
-                    item for item in similar_items
-                    if item[0] != selected_img
-                ][:10]
+        if uploaded_file:
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.image(uploaded_file, caption="Your image", use_container_width=True)
+            with col2:
+                if st.button("Find Similar Images", type="primary", key="image_search_btn"):
+                    with st.spinner("Analyzing image..."):
+                        results = search_by_image(uploaded_file, RESULTS_PER_PAGE)
+                        if results:
+                            st.session_state.search_results = results
+                            st.session_state.search_query = "Image-based search"
+                            st.session_state.last_search_type = 'image'
+                            st.session_state.page = 'results'
+                            st.rerun()
+                        else:
+                            st.warning("No similar images found.")
+
+
+def render_image_grid(images: List, show_scores: bool = False):
+    """Render images in responsive grid"""
+    if not images:
+        st.info("No images to display")
+        return
+    
+    # Create grid
+    cols_per_row = GRID_COLUMNS
+    for i in range(0, len(images), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for idx, col in enumerate(cols):
+            if i + idx < len(images):
+                item = images[i + idx]
+                url, score = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
                 
-                if similar_items:
-                    display_image_grid(similar_items, cols=3)
-                else:
-                    st.info("No other similar images found.")
+                with col:
+                    try:
+                        st.image(url, use_container_width=True)
+                        
+                        if show_scores and score is not None:
+                            st.markdown(
+                                f'<div class="similarity-badge">Match: {score:.1%}</div>',
+                                unsafe_allow_html=True
+                            )
+                        
+                        if st.button("View Details", key=f"view_{url}_{i}_{idx}", use_container_width=True):
+                            st.session_state.selected_image = url
+                            st.session_state.page = 'detail'
+                            st.rerun()
+                    except:
+                        st.error("Failed to load image")
+
+
+# ===== PAGE VIEWS =====
+def show_home_page():
+    """Display home page with search and catalog"""
+    render_header()
+    render_search_box()
+    
+    st.markdown("---")
+    st.markdown("### 📚 Browse Catalog")
+    
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.session_state.catalog_images = []
+            st.rerun()
+    
+    # Load catalog
+    if not st.session_state.catalog_images:
+        with st.spinner("Loading catalog..."):
+            all_images = fetch_all_images()
+            if all_images:
+                import random
+                st.session_state.catalog_images = random.sample(
+                    all_images, 
+                    min(CATALOG_SIZE, len(all_images))
+                )
+    
+    if st.session_state.catalog_images:
+        render_image_grid(st.session_state.catalog_images, show_scores=False)
+    else:
+        st.error("Failed to load catalog. Please check API connection.")
+
+
+def show_results_page():
+    """Display search results"""
+    st.markdown("# 🔍 Search Results")
+    
+    if st.button("← Back to Home", key="back_home"):
+        st.session_state.page = 'home'
+        st.rerun()
+    
+    st.markdown(f"**Query:** {st.session_state.search_query}")
+    st.markdown(f"**Results:** {len(st.session_state.search_results)} images found")
+    st.markdown("---")
+    
+    if st.session_state.search_results:
+        render_image_grid(st.session_state.search_results, show_scores=True)
+    else:
+        st.info("No results to display")
+
+
+def show_detail_page():
+    """Display detailed view with similar images"""
+    st.markdown("# 📸 Image Details")
+    
+    if st.button("← Back", key="back_detail"):
+        st.session_state.page = 'results' if st.session_state.search_results else 'home'
+        st.rerun()
+    
+    image_url = st.session_state.selected_image
+    
+    if image_url:
+        col1, col2 = st.columns([2, 3])
+        
+        with col1:
+            st.image(image_url, use_container_width=True)
+            st.markdown(f"**Image URL:** `{image_url}`")
+        
+        with col2:
+            st.markdown("### 🔗 Find Similar Images")
+            if st.button("Search for Similar", type="primary", use_container_width=True):
+                with st.spinner("Finding similar images..."):
+                    similar = find_similar_images(image_url, 21)
+                    if similar:
+                        st.session_state.search_results = similar
+                        st.session_state.search_query = "Similar images"
+                        st.session_state.page = 'results'
+                        st.rerun()
+        
+        st.markdown("---")
+        st.markdown("### 🎯 Similar Items")
+        
+        with st.spinner("Loading similar images..."):
+            similar_images = find_similar_images(image_url, 13)
+            if similar_images:
+                render_image_grid(similar_images[:12], show_scores=True)
             else:
-                st.info("No similar images found.")
-        except Exception as e:
-            st.error(f"Error fetching similar items: {str(e)}")
+                st.info("No similar images found")
 
 
-# ===== MAIN =====
+# ===== MAIN APPLICATION =====
 def main():
-    st.set_page_config(page_title="Image Search & Catalog", page_icon="🖼️", layout="wide")
+    init_session_state()
     
-    # CSS tweaks
-    st.markdown("""
-        <style>
-        .stButton>button { width: 100%; }
-        div[data-testid="stImage"] { transition: transform 0.2s; }
-        div[data-testid="stImage"]:hover { transform: scale(1.02); }
-        </style>
-    """, unsafe_allow_html=True)
-    
-    # View routing
-    if st.session_state.view_mode == 'catalog':
-        show_catalog()
-    elif st.session_state.view_mode == 'search_results':
-        show_search_results()
-    elif st.session_state.view_mode == 'detail':
-        show_detail()
+    # Route to appropriate page
+    if st.session_state.page == 'home':
+        show_home_page()
+    elif st.session_state.page == 'results':
+        show_results_page()
+    elif st.session_state.page == 'detail':
+        show_detail_page()
 
 
 if __name__ == "__main__":
