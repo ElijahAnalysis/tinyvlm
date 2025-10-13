@@ -1,6 +1,15 @@
+<<<<<<< HEAD
 torch
 torchvision
 fastapi
 uvicorn
 Pillow
 python-multipart
+=======
+torch
+torchvision
+fastapi
+uvicorn
+Pillow
+python-multipart
+>>>>>>> 978d49cd6fe42bc243e8ca160463dfb47d6ddf4f
