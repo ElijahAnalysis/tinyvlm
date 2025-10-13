@@ -242,6 +242,7 @@ def render_search_box():
                     st.warning("No results found. Try different keywords.")
     
     with tab2:
+        st.markdown("**Maximum file size: 25 MB**")
         uploaded_file = st.file_uploader(
             "Upload an image to find similar ones",
             type=['jpg', 'jpeg', 'png'],
@@ -249,21 +250,29 @@ def render_search_box():
         )
         
         if uploaded_file:
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.image(uploaded_file, caption="Your image", use_container_width=True)
-            with col2:
-                if st.button("Find Similar Images", type="primary", key="image_search_btn"):
-                    with st.spinner("Analyzing image..."):
-                        results = search_by_image(uploaded_file, RESULTS_PER_PAGE)
-                        if results:
-                            st.session_state.search_results = results
-                            st.session_state.search_query = "Image-based search"
-                            st.session_state.last_search_type = 'image'
-                            st.session_state.page = 'results'
-                            st.rerun()
-                        else:
-                            st.warning("No similar images found.")
+            # Check file size (25 MB = 25 * 1024 * 1024 bytes)
+            file_size_mb = uploaded_file.size / (1024 * 1024)
+            
+            if file_size_mb > 25:
+                st.error(f"❌ File too large: {file_size_mb:.2f} MB. Maximum allowed size is 25 MB.")
+                st.info("💡 Tip: Try compressing your image or using a smaller resolution.")
+            else:
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.image(uploaded_file, caption="Your image", use_container_width=True)
+                    st.caption(f"📦 File size: {file_size_mb:.2f} MB")
+                with col2:
+                    if st.button("Find Similar Images", type="primary", key="image_search_btn"):
+                        with st.spinner("Analyzing image..."):
+                            results = search_by_image(uploaded_file, RESULTS_PER_PAGE)
+                            if results:
+                                st.session_state.search_results = results
+                                st.session_state.search_query = "Image-based search"
+                                st.session_state.last_search_type = 'image'
+                                st.session_state.page = 'results'
+                                st.rerun()
+                            else:
+                                st.warning("No similar images found.")
 
 
 def render_image_grid(images: List, show_scores: bool = False):
