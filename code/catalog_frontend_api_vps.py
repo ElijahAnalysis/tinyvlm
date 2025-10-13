@@ -42,10 +42,10 @@ def load_random_images(count=RANDOM_CATALOG_SIZE):
     return all_images
 
 
-def search_by_text(text_query):
+def search_by_text(text_query, top_k=10):
     """Search images via text query."""
     try:
-        response = requests.post(f"{API_URL}/encode_text_query", params={"text_query": text_query}, timeout=30)
+        response = requests.post(f"{API_URL}/encode_text_query", params={"text_query": text_query, "top_k": top_k}, timeout=30)
         if response.status_code == 200:
             results = response.json().get('top_k_similar_items', [])
             # Convert dict format to tuple format (url, score)
@@ -58,12 +58,12 @@ def search_by_text(text_query):
         return []
 
 
-def search_by_image(image_file):
+def search_by_image(image_file, top_k=10):
     """Search images via uploaded image."""
     try:
         image_file.seek(0)
         files = {"image_query": ("image.jpg", image_file, "image/jpeg")}
-        response = requests.post(f"{API_URL}/encode_image_query", files=files, timeout=30)
+        response = requests.post(f"{API_URL}/encode_image_query", files=files, params={"top_k": top_k}, timeout=30)
         if response.status_code == 200:
             results = response.json().get('top_k_similar_items', [])
             # Convert dict format to tuple format (url, score)
@@ -91,9 +91,6 @@ def display_image_grid(image_list, cols=3):
                 try:
                     with col:
                         st.image(img_url, use_column_width=True)
-                        st.caption(img_url.split("/")[-1])
-                        if score is not None:
-                            st.caption(f"Score: {score:.3f}")
                         if st.button("View Details", key=f"btn_{img_url}"):
                             st.session_state.selected_image = img_url
                             st.session_state.view_mode = 'detail'
@@ -180,7 +177,6 @@ def show_detail():
     selected_img = st.session_state.selected_image
     if selected_img:
         st.image(selected_img, use_column_width=True)
-        st.subheader(selected_img.split("/")[-1])
         st.divider()
         st.subheader("🔗 Similar Items")
         
@@ -194,15 +190,15 @@ def show_detail():
             # Create BytesIO object from image content
             image_bytes = io.BytesIO(img_response.content)
             
-            # Search for similar images
-            similar_items = search_by_image(image_bytes)
+            # Search for similar images (request 11 to get 10 after filtering out the selected one)
+            similar_items = search_by_image(image_bytes, top_k=11)
             
             if similar_items:
-                # Filter out the selected image and take top 5
+                # Filter out the selected image and take top 10
                 similar_items = [
                     item for item in similar_items
                     if item[0] != selected_img
-                ][:5]
+                ][:10]
                 
                 if similar_items:
                     display_image_grid(similar_items, cols=3)

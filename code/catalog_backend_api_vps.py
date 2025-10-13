@@ -119,7 +119,7 @@ async def encode_image_query(image_query: UploadFile = File(...)):
         image = Image.open(io.BytesIO(content)).convert("RGB")
         image_encoded = query_encoder.encode_query(query=image, is_image=True)
         topk_similar_items = topk_finder.find_most_similar(
-            query_embedding=image_encoded, top_k=5, image=True
+            query_embedding=image_encoded, top_k=10, image=True
         )
         return {"top_k_similar_items": topk_similar_items}
 
