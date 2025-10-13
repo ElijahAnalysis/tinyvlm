@@ -6,4 +6,4 @@ fastapi
 uvicorn
 Pillow
 python-multipart
-
+sentence_transformers
