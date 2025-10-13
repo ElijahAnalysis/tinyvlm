@@ -13,14 +13,14 @@ from PIL import Image
 import io
 
 
-# Load model
-weights_file = r"C:\Users\User\OneDrive\Desktop\tinyvlm\models\dino_minilm_stage2v2.pth"
-dino_minilm = DinoMiniLMDualEncoder(weights_path=weights_file).to('cuda')
+# Load model on CPU
+weights_file = "/root/tinyvlm/models/dino_minilm_stage2v2.pth"
+dino_minilm = DinoMiniLMDualEncoder(weights_path=weights_file).to('cpu')
 dino_minilm.eval()
 
 
 # Load embeddings
-embeddings_list = torch.load(r"C:\Users\User\OneDrive\Desktop\tinyvlm\data\list_embeddings_stage2v2.pt")
+embeddings_list = torch.load("/root/tinyvlm/data/list_embeddings_stage2v2.pt", map_location='cpu')
 
 
 #### CLASSES
@@ -33,12 +33,12 @@ class QueryEncoder:
         with torch.no_grad():  # Add no_grad for inference
             if is_image == False:
                 query_embedding = self.model.text_encoder(
-                    **self.model.text_tokenizer(query, return_tensors="pt").to('cuda')
+                    **self.model.text_tokenizer(query, return_tensors="pt").to('cpu')
                 ).last_hidden_state.mean(dim=1)
                 query_embedding = self.model.text_projection(query_embedding)
             else:
                 query_embedding = self.model.image_encoder(
-                    **self.model.image_processor(images=query, return_tensors="pt").to('cuda')
+                    **self.model.image_processor(images=query, return_tensors="pt").to('cpu')
                 ).pooler_output
                 query_embedding = self.model.image_projection(query_embedding)
 
@@ -47,7 +47,7 @@ class QueryEncoder:
 
 class TopkFinder:
     def __init__(self, embeddings_list, base_image_dir=None):
-        self.device = torch.device("cuda")
+        self.device = torch.device("cpu")
         self.embeddings_list = embeddings_list
         self.base_image_dir = base_image_dir
 
@@ -105,7 +105,7 @@ class TopkFinder:
 
 
 # Initialize encoder and finder
-base_image_directory = r"C:\Users\User\OneDrive\Desktop\tinyvlm\data\image-description-marketplace-data\flip_data_vlm\flip_data_vlm"
+base_image_directory = "/root/tinyvlm/data/image-description-marketplace-data/flip_data_vlm/flip_data_vlm"
 query_encoder = QueryEncoder(dino_minilm)
 topk_finder = TopkFinder(embeddings_list, base_image_dir=base_image_directory)
 
@@ -115,14 +115,14 @@ topk_finder = TopkFinder(embeddings_list, base_image_dir=base_image_directory)
 app = FastAPI()
 
 # Mount static files to serve images
-app.mount("/images", StaticFiles(directory=r"C:\Users\User\OneDrive\Desktop\tinyvlm\data\image-description-marketplace-data\flip_data_vlm\flip_data_vlm"), name="images")
+app.mount("/images", StaticFiles(directory="/root/tinyvlm/data/image-description-marketplace-data/flip_data_vlm/flip_data_vlm"), name="images")
 
 
 @app.post('/encode_image_query')
 async def encode_image_query(image_query: UploadFile = File(...)):
     try:
         # Read image content
-        content = await image_query.read()  # Fixed: was 'image' should be 'image_query'
+        content = await image_query.read()
         image = Image.open(io.BytesIO(content)).convert("RGB")
 
         # Encode image
