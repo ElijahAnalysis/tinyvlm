@@ -1,8 +1,9 @@
 import streamlit as st
 import requests
 import io
+import base64
 from typing import List, Tuple, Optional
-import time
+from PIL import Image
 
 # ===== CONFIGURATION =====
 API_URL = "http://159.89.15.19:8000"
@@ -42,6 +43,7 @@ st.markdown("""
     img {
         border-radius: 8px;
         transition: transform 0.2s, box-shadow 0.2s;
+        cursor: pointer;
     }
     
     img:hover {
@@ -73,11 +75,45 @@ def init_session_state():
         'selected_image': None,
         'search_query': '',
         'last_search_type': None,
-        'catalog_loaded': False
+        'catalog_loaded': False,
+        'image_cache': {}
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+
+# ===== IMAGE LOADING FUNCTIONS =====
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_image_as_base64(url: str) -> Optional[str]:
+    """Load image from URL and convert to base64 for display"""
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            img = Image.open(io.BytesIO(response.content))
+            # Resize if too large to improve loading
+            if img.width > 800 or img.height > 800:
+                img.thumbnail((800, 800), Image.Resampling.LANCZOS)
+            
+            # Convert to base64
+            buffered = io.BytesIO()
+            img.save(buffered, format="JPEG", quality=85)
+            img_str = base64.b64encode(buffered.getvalue()).decode()
+            return f"data:image/jpeg;base64,{img_str}"
+    except Exception as e:
+        st.error(f"Failed to load image: {str(e)}")
+    return None
+
+
+def load_image_from_url(url: str) -> Optional[Image.Image]:
+    """Load PIL Image from URL"""
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return Image.open(io.BytesIO(response.content))
+    except:
+        pass
+    return None
 
 
 # ===== API FUNCTIONS =====
@@ -86,8 +122,7 @@ def check_api_status() -> bool:
     try:
         response = requests.get(f"{API_URL}/", timeout=5)
         return response.status_code == 200
-    except Exception as e:
-        st.error(f"API connection error: {str(e)}")
+    except:
         return False
 
 
@@ -154,7 +189,7 @@ def find_similar_images(image_url: str, top_k: int = 21) -> List[Tuple[str, floa
             results = search_by_image(image_bytes, top_k)
             return [(url, score) for url, score in results if url != image_url][:20]
         else:
-            st.error(f"Failed to fetch image from URL: {response.status_code}")
+            st.error(f"Failed to fetch image from URL: {img_response.status_code}")
     except Exception as e:
         st.error(f"Error finding similar images: {str(e)}")
     return []
@@ -232,12 +267,18 @@ def render_search_box():
 
 
 def render_image_grid(images: List, show_scores: bool = False):
-    """Render images in responsive grid"""
+    """Render images in responsive grid using base64 encoding"""
     if not images:
         st.info("No images to display")
         return
     
     cols_per_row = GRID_COLUMNS
+    
+    # Show loading progress
+    if len(images) > 8:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+    
     for i in range(0, len(images), cols_per_row):
         cols = st.columns(cols_per_row)
         for idx, col in enumerate(cols):
@@ -246,9 +287,14 @@ def render_image_grid(images: List, show_scores: bool = False):
                 url, score = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
                 
                 with col:
-                    try:
-                        # Try to display the image
-                        st.image(url, use_container_width=True)
+                    # Load image as base64
+                    img_data = load_image_as_base64(url)
+                    
+                    if img_data:
+                        st.markdown(
+                            f'<img src="{img_data}" style="width:100%; border-radius:8px;">',
+                            unsafe_allow_html=True
+                        )
                         
                         if show_scores and score is not None:
                             st.markdown(
@@ -260,9 +306,21 @@ def render_image_grid(images: List, show_scores: bool = False):
                             st.session_state.selected_image = url
                             st.session_state.page = 'detail'
                             st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Failed to load image")
-                        st.caption(f"URL: {url[:50]}...")
+                    else:
+                        st.error("❌ Failed to load")
+                        with st.expander("Details"):
+                            st.code(url[:80] + "...")
+        
+        # Update progress
+        if len(images) > 8:
+            progress = min(1.0, (i + cols_per_row) / len(images))
+            progress_bar.progress(progress)
+            status_text.text(f"Loading images... {int(progress * 100)}%")
+    
+    # Clear progress indicators
+    if len(images) > 8:
+        progress_bar.empty()
+        status_text.empty()
 
 
 # ===== PAGE VIEWS =====
@@ -279,12 +337,14 @@ def show_home_page():
         if st.button("🔄 Refresh", use_container_width=True):
             st.session_state.catalog_images = []
             st.session_state.catalog_loaded = False
+            st.cache_data.clear()
             st.rerun()
     
     with col3:
         if st.button("🏠 Load Catalog", use_container_width=True):
             st.session_state.catalog_images = []
             st.session_state.catalog_loaded = False
+            st.rerun()
     
     # Load catalog
     if not st.session_state.catalog_loaded:
@@ -300,7 +360,6 @@ def show_home_page():
                 st.info(f"📸 Displaying {len(st.session_state.catalog_images)} random images")
             else:
                 st.error("❌ Failed to load catalog. Please check API connection.")
-                st.info(f"API URL: {API_URL}")
                 return
     
     if st.session_state.catalog_images:
@@ -341,11 +400,17 @@ def show_detail_page():
         col1, col2 = st.columns([2, 3])
         
         with col1:
-            try:
-                st.image(image_url, use_container_width=True)
-                st.markdown(f"**Image URL:** `{image_url}`")
-            except Exception as e:
-                st.error(f"Failed to load image: {str(e)}")
+            img_data = load_image_as_base64(image_url)
+            if img_data:
+                st.markdown(
+                    f'<img src="{img_data}" style="width:100%; border-radius:8px;">',
+                    unsafe_allow_html=True
+                )
+            else:
+                st.error("Failed to load image")
+            
+            with st.expander("🔗 Image URL"):
+                st.code(image_url)
         
         with col2:
             st.markdown("### 🔗 Find Similar Images")
