@@ -13,12 +13,12 @@ from sentence_transformers import SentenceTransformer
 #### MODEL SETUP
 
 class DinoMiniLMDualEncoder(nn.Module):
-    def __init__(self, weights_path=None):
+    def __init__(self):
         super().__init__()
 
         # Text encoder (MiniLM)
-        self.text_encoder = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
-        self.text_tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
+        self.text_encoder = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+        self.text_tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
         # Image encoder (DINO)
         self.image_encoder = AutoModel.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
@@ -27,20 +27,6 @@ class DinoMiniLMDualEncoder(nn.Module):
         # Projection layers
         self.image_projection = nn.Linear(in_features=384, out_features=768)
         self.text_projection = nn.Linear(in_features=384, out_features=768)
-
-        if weights_path:
-            self.load_weights(weights_path)
-
-    def load_weights(self, path):
-        try:
-            # Try to get device from existing parameters, fallback to CPU
-            device = next(self.parameters()).device if len(list(self.parameters())) > 0 else torch.device('cpu')
-            
-            state_dict = torch.load(path, map_location=device)
-            self.load_state_dict(state_dict)
-            print(f"✅ Loaded weights from: {path}")
-        except Exception as e:
-            print(f"❌ Failed to load weights: {e}")
 
     def forward(self, image, text):
         device = next(self.parameters()).device  # model's device (cpu/cuda)
